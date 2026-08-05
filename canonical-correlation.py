@@ -103,3 +103,7 @@ if __name__ == "__main__":
 
     info, A, B = canonical_correlation(X, Y, regularization=0.001)
     print(pd.DataFrame(info))
+
+    print('\nBivariate Case - first variable from each sets')
+    print('Pearson rho: \t\t', np.corrcoef(X[:, 0], Y[:, 0])[0, 1])
+    print('Canonical Correlation:\t', canonical_correlation(X[:, [0]], Y[:, [0]])[0][0]['correlation'])
