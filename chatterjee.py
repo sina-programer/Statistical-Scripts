@@ -1,4 +1,8 @@
+from collections import namedtuple
+from scipy import stats
 import numpy as np
+
+ChatterjeeResult = namedtuple('ChatterjeeResult', ['statistic', 'pvalue'])
 
 
 def validate_1d_inputs(x, y):
@@ -32,6 +36,12 @@ def randomized_order(x, *, random_state=None):
     return order
 
 
+def randomized_order_alt(x, *, random_state=None):
+    rng = np.random.default_rng(random_state)
+    random_order = rng.random(np.shape(x))
+    return np.lexsort((random_order, x))
+
+
 def bidirectional_ranks(array):
     """
     Returns two arrays as follow
@@ -46,13 +56,50 @@ def bidirectional_ranks(array):
 
 
 def bidirectional_ranks_alt(array):
-    array_sorted = np.sort(array, kind='stable')
+    array_sorted = np.sort(array)
     r = np.searchsorted(array_sorted, array, side='right')
     l = np.size(array) - np.searchsorted(array_sorted, array, side='left')
     return r.astype(int), l.astype(int)
 
 
-def chatterjee(x, y, *, random_state=None):
+def null_variance(r, l):
+    """
+    Estimate tau^2 in `sqrt(n) * xi_n -> N(0, tau^2)`.
+    `r` and `l` are bidirectional-ranks regarding to X and Y.
+    under null hypothesis: X independent of Y.
+    For continuous Y it converges to 2/5 (0.4).
+    """
+
+    n = np.size(r)
+    u = np.sort(r).astype(float)
+    v = np.cumsum(u)
+    i = np.arange(n) + 1.0
+    w = 2*n - 2*i + 1.0
+
+    a = np.sum(w * np.square(u)) / n**4
+    b = np.sum(np.square(v + (n - i) * u)) / n**5
+    c = np.sum(w * u) / n**3
+    d = np.sum(l * (n-l)) / n**3
+
+    tau2 = (a - 2*b + c) / (d**2)
+
+    if tau2 <= 0:
+        raise ValueError("Estimated null variance is not positive.")
+
+    return float(tau2)
+
+
+def point_estimate(r, l):
+    numerator = n * np.abs(np.diff(r)).sum()
+    denominator = 2 * np.sum(l * (n-l))
+
+    if denominator == 0:
+        raise ValueError('Degenerated Y: the denominator of chatterjee coefficient is zero!')
+
+    return float(1 - numerator / denominator)
+
+
+def chatterjee_xi(x, y, *, random_state=None):
     """
     Chatterjee's rank correlation coefficient ξ_n(X, Y).
 
@@ -87,16 +134,15 @@ def chatterjee(x, y, *, random_state=None):
 
     indices = randomized_order(x, random_state=random_state)
     x, y = x[indices], y[indices]
-
     r, l = bidirectional_ranks(y)
-    numerator = n * np.abs(np.diff(r)).sum()
-    denominator = 2 * np.sum(l * (n-l))
 
-    if denominator == 0:
-        raise ValueError('Degenerated Y: the denominator of chatterjee coefficient is zero!')
+    xi = point_estimate(r, l)
+    tau2 = null_variance(r, l)
 
-    xi = 1 - numerator / denominator
-    return float(xi)
+    zstatistic = float(np.sqrt(n) * xi / np.sqrt(tau2))
+    pvalue = float(stats.norm.sf(zstatistic))
+
+    return ChatterjeeResult(xi, pvalue)
 
 
 if __name__ == '__main__':
@@ -105,5 +151,8 @@ if __name__ == '__main__':
     X = rng.uniform(-1, 1, n)
     Y = np.sin(8 * np.pi * X) + rng.normal(size=n)/4
 
-    print('Chatterjee Correlation:', chatterjee(X, Y))
-    print('Pearson Correlation   :', np.corrcoef(X, Y)[0, 1])
+    r = stats.pearsonr(X, Y)
+    xi = chatterjee_xi(X, Y)
+
+    print('Chatterjee:', xi)
+    print('Pearson   :', r)
